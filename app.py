@@ -1,11 +1,14 @@
+
 import streamlit as st
 import pandas as pd
 import joblib
+import sqlite3
+import plotly.express as px
 from datetime import datetime
 
-# -----------------------------------------
-# PAGE CONFIGURATION
-# -----------------------------------------
+# ==========================================
+# 1. PAGE CONFIGURATION
+# ==========================================
 
 st.set_page_config(
     page_title="SpamGuard AI",
@@ -14,301 +17,530 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# -----------------------------------------
-# LOAD MACHINE LEARNING MODEL
-# -----------------------------------------
-
-@st.cache_resource
-def load_model():
-    model = joblib.load("spam_model.pkl")
-    vectorizer = joblib.load("vectorizer.pkl")
-    return model, vectorizer
-
-try:
-    model, vectorizer = load_model()
-except Exception as e:
-    st.error("Model files could not be loaded.")
-    st.write("Make sure these files exist in your repository:")
-    st.code("spam_model.pkl\nvectorizer.pkl")
-    st.stop()
-
-# -----------------------------------------
-# SESSION STATE
-# -----------------------------------------
-
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-if "total_scanned" not in st.session_state:
-    st.session_state.total_scanned = 0
-
-if "spam_detected" not in st.session_state:
-    st.session_state.spam_detected = 0
-
-# -----------------------------------------
-# CUSTOM DARK THEME
-# -----------------------------------------
+# ==========================================
+# 2. PREMIUM DARK THEME
+# ==========================================
 
 st.markdown("""
 <style>
 
 .stApp {
-    background-color: #0B1120;
-    color: #F8FAFC;
+    background-color: #0b1120;
+    color: #f1f5f9;
 }
 
 [data-testid="stSidebar"] {
     background-color: #111827;
 }
 
-.main-title {
-    font-size: 42px;
-    font-weight: 800;
-    color: #4ADEA5;
-    text-align: center;
+h1, h2, h3 {
+    color: #f1f5f9;
 }
 
-.subtitle {
-    color: #94A3B8;
-    font-size: 17px;
-    text-align: center;
+p, label {
+    color: #cbd5e1;
 }
 
-.result-card {
-    padding: 22px;
-    border-radius: 14px;
-    background: #172338;
-    border: 1px solid #334155;
+/* PREMIUM STATISTIC CARDS */
+
+.metric-card {
+    background: linear-gradient(135deg, #1e293b, #312e81);
+    padding: 24px;
+    border-radius: 15px;
+    border: 1px solid #475569;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.25);
+    transition: 0.3s ease;
 }
 
-div.stButton > button {
-    background-color: #10B981;
+.metric-card:hover {
+    transform: translateY(-5px);
+    border-color: #818cf8;
+}
+
+.metric-card h1 {
+    color: #ffffff;
+    font-size: 38px;
+    margin: 8px 0;
+}
+
+.metric-card h4 {
+    color: #c7d2fe;
+}
+
+.metric-card p {
+    color: #94a3b8;
+}
+
+/* MESSAGE INPUT */
+
+.stTextArea textarea {
+    background-color: #1e293b;
+    color: white;
+    border: 1px solid #475569;
+    border-radius: 12px;
+}
+
+/* BUTTONS */
+
+.stButton button {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
     color: white;
     border-radius: 10px;
     border: none;
-    height: 45px;
+    padding: 12px;
     font-weight: bold;
-    width: 100%;
+    transition: 0.3s;
 }
 
-div.stButton > button:hover {
-    background-color: #059669;
+.stButton button:hover {
+    background: linear-gradient(90deg, #4f46e5, #7c3aed);
     color: white;
+    border: 1px solid #a5b4fc;
 }
 
-.stTextArea textarea {
-    color: #111827 !important;
-    background-color: #FFFFFF !important;
-    caret-color: #111827 !important;
-    -webkit-text-fill-color: #111827 !important;
+/* RESULT CARDS */
+
+.result-spam {
+    background-color: #451a1a;
+    border: 1px solid #ef4444;
+    padding: 22px;
+    border-radius: 14px;
 }
 
-.stTextArea textarea::placeholder {
-    color: #777777 !important;
-    -webkit-text-fill-color: #777777 !important;
+.result-safe {
+    background-color: #123524;
+    border: 1px solid #22c55e;
+    padding: 22px;
+    border-radius: 14px;
 }
 
-[data-testid="stMetric"] {
-    background-color: #172338;
-    padding: 15px;
-    border-radius: 12px;
-    border: 1px solid #334155;
-}
-
-h1, h2, h3 {
-    color: #F8FAFC;
+.footer {
+    text-align: center;
+    color: #64748b;
+    padding: 25px;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
-# -----------------------------------------
-# SIDEBAR NAVIGATION
-# -----------------------------------------
 
-with st.sidebar:
+# ==========================================
+# 3. LOAD MACHINE LEARNING MODEL
+# ==========================================
 
-    st.title("🛡️ SpamGuard AI")
+@st.cache_resource
+def load_model():
 
-    st.caption("Intelligent Spam Detection System")
+    model = joblib.load("spam_model.pkl")
+    vectorizer = joblib.load("vectorizer.pkl")
 
-    st.divider()
+    return model, vectorizer
 
-    page = st.radio(
-        "Navigation",
-        ["🏠 Dashboard", "📜 History", "📊 Analytics"]
+
+try:
+
+    model, vectorizer = load_model()
+
+except Exception as e:
+
+    st.error(f"Model loading error: {e}")
+    st.stop()
+
+
+# ==========================================
+# 4. DATABASE CONFIGURATION
+# ==========================================
+
+def initialize_database():
+
+    conn = sqlite3.connect("spamguard.db")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            message TEXT,
+            result TEXT,
+            probability REAL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+initialize_database()
+
+
+# ==========================================
+# 5. SAVE DETECTION HISTORY
+# ==========================================
+
+def save_history(message, result, probability):
+
+    conn = sqlite3.connect("spamguard.db")
+
+    conn.execute("""
+        INSERT INTO history
+        (timestamp, message, result, probability)
+        VALUES (?, ?, ?, ?)
+    """, (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        message,
+        result,
+        probability
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# ==========================================
+# 6. GET HISTORY
+# ==========================================
+
+def get_history():
+
+    conn = sqlite3.connect("spamguard.db")
+
+    df = pd.read_sql_query(
+        "SELECT * FROM history ORDER BY id DESC",
+        conn
     )
 
-    st.divider()
+    conn.close()
 
-    st.info("Powered by Machine Learning")
+    return df
 
-    st.caption("SpamGuard AI | Version 1.0")
 
-# -----------------------------------------
-# PREDICTION FUNCTION
-# -----------------------------------------
+# ==========================================
+# 7. CLEAR HISTORY
+# ==========================================
+
+def clear_history():
+
+    conn = sqlite3.connect("spamguard.db")
+
+    conn.execute("DELETE FROM history")
+
+    conn.commit()
+    conn.close()
+
+
+# ==========================================
+# 8. SPAM DETECTION FUNCTION
+# ==========================================
 
 def predict_spam(message):
 
-    transformed_message = vectorizer.transform([message])
+    message_vector = vectorizer.transform([message])
 
-    prediction = model.predict(transformed_message)[0]
+    prediction = model.predict(message_vector)[0]
 
-    probability = model.predict_proba(transformed_message)[0]
+    label = str(prediction).strip().lower()
 
-    classes = list(model.classes_)
+    # Determine prediction result
 
-    # Find the spam class
-    spam_index = None
+    if label in ["spam", "1", "1.0"]:
 
-    for i, label in enumerate(classes):
-        if str(label).strip().lower() == "spam":
-            spam_index = i
-            break
+        result = "Spam"
 
-    if spam_index is None:
-        for i, label in enumerate(classes):
-            if str(label).strip() == "1":
+    elif label in ["ham", "safe", "not spam", "0", "0.0"]:
+
+        result = "Safe"
+
+    else:
+
+        raise ValueError(
+            f"Unknown model prediction label: {prediction}"
+        )
+
+    # Calculate probability
+
+    if hasattr(model, "predict_proba"):
+
+        probabilities = model.predict_proba(message_vector)[0]
+
+        classes = list(model.classes_)
+
+        spam_index = None
+
+        for i, class_label in enumerate(classes):
+
+            class_name = str(class_label).strip().lower()
+
+            if class_name in ["spam", "1", "1.0"]:
+
                 spam_index = i
                 break
 
-    if spam_index is None:
-        spam_index = 1 if len(classes) > 1 else 0
+        if spam_index is not None:
 
-    spam_probability = float(probability[spam_index]) * 100
+            spam_probability = float(
+                probabilities[spam_index]
+            ) * 100
 
-    if str(prediction).strip().lower() == "spam":
-        result = "SPAM"
-    elif str(prediction).strip().lower() == "ham":
-        result = "NOT SPAM"
-    elif str(prediction).strip() == "1":
-        result = "SPAM"
+        else:
+
+            spam_probability = (
+                100.0 if result == "Spam" else 0.0
+            )
+
     else:
-        result = "NOT SPAM"
+
+        spam_probability = (
+            100.0 if result == "Spam" else 0.0
+        )
 
     return result, spam_probability
 
-# -----------------------------------------
-# DASHBOARD PAGE
-# -----------------------------------------
+
+# ==========================================
+# 9. SIDEBAR NAVIGATION
+# ==========================================
+
+st.sidebar.title("🛡️ SpamGuard AI")
+
+st.sidebar.markdown("---")
+
+page = st.sidebar.radio(
+    "NAVIGATION",
+    [
+        "🏠 Dashboard",
+        "📜 History",
+        "📊 Analytics"
+    ]
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.info(
+    "AI-powered SMS spam detection system."
+)
+
+st.sidebar.caption("Version 2.0")
+
+
+# ==========================================
+# 10. DASHBOARD PAGE
+# ==========================================
 
 if page == "🏠 Dashboard":
 
-    st.markdown(
-        '<div class="main-title">🛡️ SpamGuard AI</div>',
-        unsafe_allow_html=True
+    st.title("🛡️ SpamGuard AI")
+
+    st.caption(
+        "YOUR INTELLIGENT MESSAGE SECURITY CENTER"
     )
 
-    st.markdown(
-        '<div class="subtitle">Intelligent Spam Message Detection System</div>',
-        unsafe_allow_html=True
+    st.markdown("---")
+
+    # GET STATISTICS
+
+    df = get_history()
+
+    total = len(df)
+
+    spam_count = len(
+        df[df["result"] == "Spam"]
     )
 
-    st.write("")
-
-    st.header("🔎 Analyze Your Message")
-
-    message = st.text_area(
-        "Enter your SMS or message",
-        placeholder="Type your message here...",
-        height=150,
-        key="message_input"
+    safe_count = len(
+        df[df["result"] == "Safe"]
     )
 
-    if st.button("🚀 Analyze Message", use_container_width=True):
+    # PREMIUM STATISTIC CARDS
 
-        if not message.strip():
-
-            st.warning("Please enter a message first.")
-
-        else:
-
-            result, spam_probability = predict_spam(message)
-
-            st.session_state.total_scanned += 1
-
-            if result == "SPAM":
-                st.session_state.spam_detected += 1
-
-            st.session_state.history.append({
-                "Time": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-                "Message": message,
-                "Result": result,
-                "Spam Probability": round(spam_probability, 2)
-            })
-
-            st.session_state.last_result = result
-            st.session_state.last_probability = spam_probability
-
-    # Show latest prediction
-
-    if "last_result" in st.session_state:
-
-        st.divider()
-
-        st.subheader("🎯 Detection Result")
-
-        result = st.session_state.last_result
-        probability = st.session_state.last_probability
-
-        if result == "SPAM":
-
-            st.error("🚨 This message is SPAM!")
-
-        else:
-
-            st.success("✅ This message is NOT SPAM!")
-
-        st.metric(
-            "Spam Probability",
-            f"{probability:.2f}%"
-        )
-
-        st.progress(int(probability))
-
-        st.caption(
-            "Probability represents the model's estimated confidence "
-            "for the spam class."
-        )
-
-    # Quick statistics
-
-    st.divider()
-
-    st.header("📊 Quick Statistics")
+    st.subheader("📊 Security Overview")
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Total Scanned",
-        st.session_state.total_scanned
+    with col1:
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>📩 Total Messages</h4>
+            <h1>{total}</h1>
+            <p>Messages Analyzed</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>🚨 Spam Detected</h4>
+            <h1>{spam_count}</h1>
+            <p>Threats Identified</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>✅ Safe Messages</h4>
+            <h1>{safe_count}</h1>
+            <p>Legitimate Messages</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # MESSAGE ANALYZER
+
+    st.subheader("🔍 AI Message Analyzer")
+
+    st.write(
+        "Check any SMS message using our trained Machine Learning model."
     )
 
-    col2.metric(
-        "Spam Detected",
-        st.session_state.spam_detected
+    message = st.text_area(
+        "Enter your message",
+        placeholder="Paste your SMS message here...",
+        height=160,
+        key="premium_message"
     )
 
-    col3.metric(
-        "Safe Messages",
-        st.session_state.total_scanned
-        - st.session_state.spam_detected
+    analyze = st.button(
+        "🚀 ANALYZE MESSAGE",
+        use_container_width=True
     )
 
-# -----------------------------------------
-# HISTORY PAGE
-# -----------------------------------------
+    if analyze:
+
+        if not message.strip():
+
+            st.warning(
+                "Please enter a message first."
+            )
+
+        else:
+
+            try:
+
+                result, probability = predict_spam(message)
+
+                save_history(
+                    message,
+                    result,
+                    probability
+                )
+
+                st.session_state["last_result"] = result
+
+                st.session_state["last_probability"] = probability
+
+                st.session_state["last_message"] = message
+
+                st.success(
+                    "Message analyzed successfully!"
+                )
+
+            except Exception as e:
+
+                st.error(
+                    f"Prediction error: {e}"
+                )
+
+    # DISPLAY LATEST RESULT
+
+    if "last_result" in st.session_state:
+
+        result = st.session_state["last_result"]
+
+        probability = st.session_state["last_probability"]
+
+        st.markdown("---")
+
+        st.subheader("🎯 Latest Analysis Result")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            if result == "Spam":
+
+                st.markdown("""
+                <div class="result-spam">
+                    <h2>🚨 SPAM MESSAGE</h2>
+                    <p>This message has been identified as spam.</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+            else:
+
+                st.markdown("""
+                <div class="result-safe">
+                    <h2>✅ SAFE MESSAGE</h2>
+                    <p>This message appears legitimate.</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+        with col2:
+
+            st.metric(
+                "Spam Probability",
+                f"{probability:.2f}%"
+            )
+
+            st.progress(
+                min(max(int(probability), 0), 100)
+            )
+
+        st.caption(
+            "Probability represents the model's estimated likelihood "
+            "that the message is spam."
+        )
+
+        st.caption(
+            "Machine learning predictions are estimates, not guarantees."
+        )
+
+    st.markdown("---")
+
+    # RECENT ACTIVITY
+
+    st.subheader("🕒 Recent Detection Activity")
+
+    recent_df = get_history()
+
+    if recent_df.empty:
+
+        st.info(
+            "No messages analyzed yet."
+        )
+
+    else:
+
+        st.dataframe(
+            recent_df.head(5),
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# ==========================================
+# 11. HISTORY PAGE
+# ==========================================
 
 elif page == "📜 History":
 
     st.title("📜 Detection History")
 
-    st.write("All messages analyzed during this session.")
+    st.caption(
+        "View all previously analyzed messages."
+    )
 
-    if st.session_state.history:
+    df = get_history()
 
-        df = pd.DataFrame(st.session_state.history)
+    if df.empty:
+
+        st.info(
+            "No detection history available."
+        )
+
+    else:
 
         st.dataframe(
             df,
@@ -316,111 +548,229 @@ elif page == "📜 History":
             hide_index=True
         )
 
-        csv = df.to_csv(index=False).encode("utf-8")
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.metric(
+                "Total Records",
+                len(df)
+            )
+
+        with col2:
+
+            if st.button("🗑️ Clear History"):
+
+                clear_history()
+
+                st.success(
+                    "History cleared successfully!"
+                )
+
+                st.rerun()
+
+        # CSV DOWNLOAD
+
+        csv = df.to_csv(
+            index=False
+        ).encode("utf-8")
 
         st.download_button(
-            "⬇️ Download History CSV",
+            "📥 Download History CSV",
             data=csv,
             file_name="spamguard_history.csv",
             mime="text/csv"
         )
 
-        if st.button("🗑️ Clear History"):
 
-            st.session_state.history = []
-            st.session_state.total_scanned = 0
-            st.session_state.spam_detected = 0
-
-            if "last_result" in st.session_state:
-                del st.session_state.last_result
-
-            if "last_probability" in st.session_state:
-                del st.session_state.last_probability
-
-            st.rerun()
-
-    else:
-
-        st.info("No detection history available yet.")
-
-# -----------------------------------------
-# ANALYTICS PAGE
-# -----------------------------------------
+# ==========================================
+# 12. ANALYTICS PAGE
+# ==========================================
 
 elif page == "📊 Analytics":
 
-    st.title("📊 SpamGuard Analytics")
+    st.title("📊 Analytics Dashboard")
 
-    if st.session_state.history:
+    st.caption(
+        "Interactive insights from SpamGuard AI"
+    )
 
-        df = pd.DataFrame(st.session_state.history)
+    df = get_history()
+
+    if df.empty:
+
+        st.info(
+            "Analyze some messages to see analytics."
+        )
+
+    else:
 
         total = len(df)
 
         spam_count = len(
-            df[df["Result"] == "SPAM"]
+            df[df["result"] == "Spam"]
         )
 
         safe_count = len(
-            df[df["Result"] == "NOT SPAM"]
+            df[df["result"] == "Safe"]
         )
+
+        spam_percentage = (
+            spam_count / total * 100
+        )
+
+        safe_percentage = (
+            safe_count / total * 100
+        )
+
+        # METRIC CARDS
+
+        st.markdown("---")
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric("Total Messages", total)
+        col1.metric(
+            "Total Messages",
+            total
+        )
 
-        col2.metric("Spam Messages", spam_count)
+        col2.metric(
+            "🚨 Spam Messages",
+            spam_count
+        )
 
-        col3.metric("Safe Messages", safe_count)
+        col3.metric(
+            "✅ Safe Messages",
+            safe_count
+        )
 
-        st.divider()
+        st.markdown("---")
 
-        st.subheader("📈 Spam vs Safe Messages")
+        # DONUT CHART
+
+        st.subheader("🍩 Message Distribution")
 
         chart_data = pd.DataFrame({
             "Category": ["Spam", "Safe"],
-            "Messages": [spam_count, safe_count]
+            "Count": [spam_count, safe_count]
         })
 
-        st.bar_chart(
+        fig = px.pie(
+            chart_data,
+            names="Category",
+            values="Count",
+            hole=0.55,
+            title="Spam vs Safe Messages",
+            color="Category",
+            color_discrete_map={
+                "Spam": "#ef4444",
+                "Safe": "#22c55e"
+            }
+        )
+
+        fig.update_traces(
+            textinfo="label+percent",
+            hovertemplate=(
+                "%{label}: %{value}<extra></extra>"
+            )
+        )
+
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0b1120",
+            plot_bgcolor="#0b1120",
+            font_color="white"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        st.markdown("---")
+
+        # BAR CHART
+
+        st.subheader(
+            "📈 Spam vs Safe Comparison"
+        )
+
+        bar_fig = px.bar(
             chart_data,
             x="Category",
-            y="Messages"
+            y="Count",
+            color="Category",
+            text="Count",
+            color_discrete_map={
+                "Spam": "#ef4444",
+                "Safe": "#22c55e"
+            }
         )
 
-        st.divider()
-
-        st.subheader("📊 Spam Probability Distribution")
-
-        st.bar_chart(
-            df["Spam Probability"]
+        bar_fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0b1120",
+            plot_bgcolor="#0b1120",
+            showlegend=False
         )
 
-        st.divider()
+        st.plotly_chart(
+            bar_fig,
+            use_container_width=True
+        )
 
-        st.subheader("📋 Detailed Analytics")
+        st.markdown("---")
+
+        # SPAM DISTRIBUTION
+
+        st.subheader("🎯 Spam Detection Rate")
+
+        col1, col2 = st.columns(2)
+
+        col1.metric(
+            "Spam Percentage",
+            f"{spam_percentage:.2f}%"
+        )
+
+        col2.metric(
+            "Safe Percentage",
+            f"{safe_percentage:.2f}%"
+        )
+
+        st.progress(
+            min(max(int(spam_percentage), 0), 100)
+        )
+
+        st.markdown("---")
+
+        # RECENT RECORDS
+
+        st.subheader(
+            "🕒 Recent Detection Records"
+        )
 
         st.dataframe(
-            df,
+            df.head(10),
             use_container_width=True,
             hide_index=True
         )
 
-    else:
 
-        st.info(
-            "Analyze some messages on the Dashboard "
-            "to generate analytics."
-        )
+# ==========================================
+# 13. FOOTER
+# ==========================================
 
-# -----------------------------------------
-# FOOTER
-# -----------------------------------------
+st.markdown("---")
 
-st.divider()
+st.markdown("""
+<div class="footer">
+    🛡️ SpamGuard AI | Version 2.0
+    <br>
+    Powered by Machine Learning
+    <br>
+    Built with Python, Streamlit and Plotly
+</div>
+""", unsafe_allow_html=True)
 
-st.markdown(
-    "<center>🛡️ SpamGuard AI | Built with Python, "
-    "Streamlit & Machine Learning</center>",
-    unsafe_allow_html=True
-)
